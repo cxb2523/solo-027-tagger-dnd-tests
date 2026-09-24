@@ -35,6 +35,47 @@ tagger(document.querySelector('[name="tags"]'), {allow_spaces: false});
 
 Multiple inputs can be created by passing a NodeList or array of elements (eg. document.querySelectorAll()). If only one element is contained in the list then tagger will return the tagger instance, an array of tagger instances will be returned if the number of elements is greater than 1.
 
+## Features
+
+### Reordering tags
+
+Tags can be reordered by dragging them with the mouse. Keyboard users can focus a tag
+(arrow keys move focus between tags, `Left` at the start of the input focuses the last tag)
+and move it with `Ctrl+Left`/`Ctrl+Right` (`Cmd` on macOS). `Backspace`/`Delete` on a
+focused tag removes it.
+
+### Paste import
+
+Pasting text that contains separators (comma, semicolon, tab) or newlines into the tag
+input imports every item as its own tag. Duplicates within the pasted text and tags that
+already exist are skipped.
+
+### Validation
+
+The optional `validate` callback is called with the tag name before a tag is committed.
+Return `true` (or nothing) to accept the tag. Return `false` or a string to reject it:
+the tag is not stored in the underlying input value and the error is attached to the
+rendered tag (`.tagger-error` class, `data-error` attribute and a visible
+`.tagger-error-message` element). A returned string is used as the error message.
+
+```javascript
+tagger(document.querySelector('[name="tags"]'), {
+    validate: function(name) {
+        return name.length >= 3 || 'tag is too short';
+    }
+});
+```
+
+## Running tests
+
+Tests use the built-in `node:test` runner together with [jsdom](https://github.com/jsdom/jsdom)
+(the only dev dependency, the library itself stays zero dependency).
+
+```
+npm install
+npm test
+```
+
 ## Usage with React
 
 Tagger can easily be used with ReactJS.
@@ -98,6 +139,7 @@ See demo in action on [CodePen](https://codepen.io/jcubic/pen/YzRdbmp?editors=00
 * **tag_limit** `number` (default -1) limit number of tags, when set to -1 there are no limits
 * **placeholder** `string` (default unset) If set in options or on the initial input, this placeholder value will be shown in the tag entry input
 * **filter** `function(name): string` it should return the tag name after applying any filters (eg String.toUpperCase()), empty string to filter out tag and prevent creation.
+* **validate** `function(name): boolean|string` (default unset) return `true`/`undefined` to accept the tag, or `false`/an error message string to reject it; rejected tags are not stored and show the error on the tag itself
 
 **NOTE:** if you're familiar with TypeScript you can check the API by looking at
 TypeScript definition file:

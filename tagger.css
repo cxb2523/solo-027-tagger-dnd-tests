@@ -81,3 +81,24 @@
     flex-wrap: wrap;
     justify-content: start;
 }
+.tagger > ul > li:not(.tagger-new) {
+    cursor: grab;
+}
+.tagger > ul > li:not(.tagger-new):focus {
+    outline: 2px solid #4181ed;
+    outline-offset: 1px;
+}
+.tagger > ul > li.tagger-dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+.tagger > ul > li.tagger-error > :first-child {
+    background: #f8d7da;
+    border-color: #dc3545;
+}
+.tagger .tagger-error-message {
+    color: #dc3545;
+    font-size: 12px;
+    margin-left: 4px;
+    white-space: nowrap;
+}

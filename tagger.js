@@ -121,6 +121,7 @@
             return '/tag/' + name;
         },
         filter: (name) => name,
+        validate: null,
     };
     // ------------------------------------------------------------------------------------------
     tagger.fn = tagger.prototype = {
@@ -179,9 +180,109 @@
                     self._new_input_tag.focus();
                 }
             });
+            // ----------------------------------------------------------------------------------
+            // keyboard navigation + reordering on tags
+            this._ul.addEventListener('keydown', function(event) {
+                var li = event.target.closest ? event.target.closest('li') : null;
+                if (!li || li.className.match(/tagger-new/)) {
+                    return;
+                }
+                var move = event.ctrlKey || event.metaKey;
+                if (event.keyCode === 37) { // left arrow
+                    if (move) {
+                        self._move_tag(li, -1);
+                        li.focus();
+                    } else if (li.previousElementSibling) {
+                        li.previousElementSibling.focus();
+                    }
+                    event.preventDefault();
+                } else if (event.keyCode === 39) { // right arrow
+                    if (move) {
+                        self._move_tag(li, 1);
+                        li.focus();
+                    } else {
+                        var next = li.nextElementSibling;
+                        if (next && !next.className.match(/tagger-new/)) {
+                            next.focus();
+                        } else {
+                            self._new_input_tag.focus();
+                        }
+                    }
+                    event.preventDefault();
+                } else if (event.keyCode === 8 || event.keyCode === 46) { // backspace || delete
+                    var sibling = li.previousElementSibling;
+                    self._ul.removeChild(li);
+                    self._sync_tags_from_dom();
+                    if (sibling) {
+                        sibling.focus();
+                    } else {
+                        self._new_input_tag.focus();
+                    }
+                    event.preventDefault();
+                }
+            });
+            // ----------------------------------------------------------------------------------
+            // drag & drop reordering
+            this._ul.addEventListener('dragstart', function(event) {
+                var li = event.target.closest ? event.target.closest('li') : null;
+                if (!li || li.className.match(/tagger-new/)) {
+                    return;
+                }
+                self._drag_li = li;
+                li.classList.add('tagger-dragging');
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', get_text(li.querySelector('.label')));
+                }
+            });
+            this._ul.addEventListener('dragover', function(event) {
+                if (!self._drag_li) {
+                    return;
+                }
+                event.preventDefault();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+                var li = event.target.closest ? event.target.closest('li') : null;
+                if (!li || li === self._drag_li) {
+                    return;
+                }
+                if (li.className.match(/tagger-new/)) {
+                    self._ul.insertBefore(self._drag_li, li);
+                    return;
+                }
+                var rect = li.getBoundingClientRect();
+                var after = (event.clientX - rect.left) > rect.width / 2;
+                self._ul.insertBefore(self._drag_li, after ? li.nextSibling : li);
+            });
+            this._ul.addEventListener('drop', function(event) {
+                if (!self._drag_li) {
+                    return;
+                }
+                event.preventDefault();
+                self._sync_tags_from_dom();
+            });
+            this._ul.addEventListener('dragend', function() {
+                if (self._drag_li) {
+                    self._drag_li.classList.remove('tagger-dragging');
+                    self._drag_li = null;
+                    self._sync_tags_from_dom();
+                }
+            });
+            // ----------------------------------------------------------------------------------
+            // paste multiple tags separated by comma, semicolon, tab or newlines
+            this._new_input_tag.addEventListener('paste', function(event) {
+                var clipboard = event.clipboardData || window.clipboardData;
+                var text = clipboard && clipboard.getData('text');
+                if (!text || !text.match(/[,;\t\r\n]/)) {
+                    return;
+                }
+                event.preventDefault();
+                self._import_tags(text);
+            });
             if (this._settings.add_on_blur) {
                 this._new_input_tag.addEventListener('blur', function(event) {
-                    if (self.add_tag(self._new_input_tag.value.trim())) {
+                    if (self._add_tag(self._new_input_tag.value.trim()) !== 'rejected') {
                         self._new_input_tag.value = '';
                     }
                 });
@@ -190,18 +291,26 @@
             this._new_input_tag.addEventListener('keydown', function(event) {
                 if (event.keyCode === 13 || event.keyCode === 188 ||
                     (event.keyCode === 32 && !self._settings.allow_spaces)) { // enter || comma || space
-                    if (self.add_tag(self._new_input_tag.value.trim())) {
+                    if (self._add_tag(self._new_input_tag.value.trim()) !== 'rejected') {
                         self._new_input_tag.value = '';
                     }
                     event.preventDefault();
                 } else if (event.keyCode === 8 && !self._new_input_tag.value) { // backspace
-                    if (self._tags.length > 0) {
-                        var li = self._ul.querySelector('li:nth-last-child(2)');
+                    var li = self._ul.querySelector('li:nth-last-child(2)');
+                    if (li && !li.className.match(/tagger-new/)) {
                         self._ul.removeChild(li);
-                        self._tags.pop();
-                        self._update_input();
+                        if (!li.className.match(/tagger-error/)) {
+                            self._tags.pop();
+                            self._update_input();
+                        }
                     }
                     event.preventDefault();
+                } else if (event.keyCode === 37 && self._new_input_tag.selectionStart === 0) { // left arrow
+                    var tags = self._tag_lis();
+                    if (tags.length > 0) {
+                        tags[tags.length - 1].focus();
+                        event.preventDefault();
+                    }
                 } else if (event.keyCode === 32 && (event.ctrlKey || event.metaKey)) {
                     if (typeof self._settings.completion.list === 'function') {
                         self.complete(self._new_input_tag.value);
@@ -291,10 +400,13 @@
         // --------------------------------------------------------------------------------------
         tags_from_input: function() {
             this._tags = this._input.value.split(/\s*,\s*/).filter(Boolean);
-            this._tags.forEach(this._new_tag.bind(this));
+            var self = this;
+            this._tags.forEach(function(name) {
+                self._new_tag(name);
+            });
         },
         // --------------------------------------------------------------------------------------
-        _new_tag: function(name) {
+        _new_tag: function(name, error) {
             var close = ['a', {href: '#', 'class': 'close'}, ['\u00D7']];
             var label = ['span', {'class': 'label'}, [name]];
             var href = this._settings.link(name);
@@ -305,7 +417,80 @@
                 var a_atts = {href: href, target: '_black'};
                 li = create('li', {}, [['a', a_atts, [label, close]]]);
             }
+            li.setAttribute('tabindex', '0');
+            li.setAttribute('draggable', 'true');
+            if (typeof error === 'string' && error) {
+                li.classList.add('tagger-error');
+                li.setAttribute('aria-invalid', 'true');
+                li.setAttribute('title', error);
+                li.setAttribute('data-error', error);
+                li.appendChild(create('span', {'class': 'tagger-error-message'}, [error]));
+            }
             this._ul.insertBefore(li, this._new_input_tag.parentNode);
+        },
+        // --------------------------------------------------------------------------------------
+        _tag_lis: function() {
+            var self = this;
+            return Array.from(this._ul.querySelectorAll('li')).filter(function(li) {
+                return li !== self._new_input_tag.parentNode;
+            });
+        },
+        // --------------------------------------------------------------------------------------
+        _sync_tags_from_dom: function() {
+            this._tags = this._tag_lis().filter(function(li) {
+                return !li.className.match(/tagger-error/);
+            }).map(function(li) {
+                return get_text(li.querySelector('.label'));
+            });
+            this._update_input();
+        },
+        // --------------------------------------------------------------------------------------
+        _move_tag: function(li, offset) {
+            var tags = this._tag_lis();
+            var index = tags.indexOf(li);
+            var target = index + offset;
+            if (index === -1 || target < 0 || target >= tags.length) {
+                return false;
+            }
+            if (offset < 0) {
+                this._ul.insertBefore(li, tags[target]);
+            } else {
+                this._ul.insertBefore(li, tags[target].nextSibling);
+            }
+            this._sync_tags_from_dom();
+            return true;
+        },
+        // --------------------------------------------------------------------------------------
+        _import_tags: function(text) {
+            var self = this;
+            var seen = [];
+            text.split(/[,;\t\r\n]+/).map(function(name) {
+                return name.trim();
+            }).filter(Boolean).forEach(function(name) {
+                if (seen.indexOf(name) !== -1) {
+                    return;
+                }
+                seen.push(name);
+                if (self._tags.indexOf(name) !== -1) {
+                    return;
+                }
+                self._add_tag(name);
+            });
+        },
+        // --------------------------------------------------------------------------------------
+        _validate: function(name) {
+            var validate = this._settings.validate;
+            if (typeof validate !== 'function') {
+                return null;
+            }
+            var result = validate(name);
+            if (result === true || result === undefined || result === null) {
+                return null;
+            }
+            if (typeof result === 'string') {
+                return result;
+            }
+            return 'Invalid tag';
         },
         // --------------------------------------------------------------------------------------
         _tag_limit: function() {
@@ -313,20 +498,29 @@
         },
         // --------------------------------------------------------------------------------------
         add_tag: function(name) {
+            return this._add_tag(name) === 'added';
+        },
+        // --------------------------------------------------------------------------------------
+        _add_tag: function(name) {
             if (this._tag_limit()) {
-                return false;
+                return 'rejected';
             }
             name = this._settings.filter(name);
             if (this.is_empty(name)) {
-                return false;
+                return 'rejected';
             }
             if (!this._settings.allow_duplicates && this._tags.indexOf(name) !== -1) {
-                return false;
+                return 'rejected';
+            }
+            var error = this._validate(name);
+            if (error !== null) {
+                this._new_tag(name, error);
+                return 'error';
             }
             this._new_tag(name);
             this._tags.push(name);
             this._update_input();
-            return true;
+            return 'added';
         },
         // --------------------------------------------------------------------------------------
         is_empty: function(value) {

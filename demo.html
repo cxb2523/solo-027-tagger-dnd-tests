@@ -18,6 +18,16 @@
   <input type="text" value="charles,louis,michel" name="tags2" />
   <input type="text" value="charles,louis,michel" name="tags3a" />
   <input type="text" value="charles,louis,michel,lorem,ipsum,dolor,sit,amet,this is some long tag that should be wrapped" name="tags3b" />
+  <h2>Reorder, paste &amp; validate</h2>
+  <p>
+    Drag tags with the mouse to reorder them, or focus a tag and use
+    <kbd>Ctrl</kbd>+<kbd>Left</kbd>/<kbd>Right</kbd> (<kbd>Cmd</kbd> on macOS).
+    Paste a list like <code>foo,bar</code> or lines of text to import many tags at once
+    (duplicates are skipped). Tags need at least 3 characters &mdash;
+    try <code>ab</code> to see a validation error.
+  </p>
+  <input type="text" value="charles,louis,michel" name="tags4" />
+  <p>Tag count: <strong id="tags4-count">3</strong></p>
 <script src="tagger.js"></script>
 <script>
   var t1 = tagger(document.querySelector('[name="tags"]'), {
@@ -44,6 +54,19 @@
       link: function(name) {
           return `javascript:alert('${name}');`;
       }
+  });
+  var tags4_input = document.querySelector('[name="tags4"]');
+  var t4 = tagger(tags4_input, {
+      allow_duplicates: false,
+      allow_spaces: true,
+      link: function() { return false; },
+      validate: function(name) {
+          return name.length >= 3 || 'tag "' + name + '" is too short';
+      }
+  });
+  var tags4_count = document.getElementById('tags4-count');
+  tags4_input.addEventListener('input', function() {
+      tags4_count.textContent = tags4_input.value.split(/\s*,\s*/).filter(Boolean).length;
   });
 </script>
 </body>

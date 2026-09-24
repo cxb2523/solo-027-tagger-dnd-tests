@@ -5,6 +5,7 @@
   "typings": "tagger.d.ts",
   "main": "tagger.js",
   "scripts": {
+    "test": "node --test test/"
   },
   "repository": {
     "type": "git",
@@ -26,5 +27,8 @@
   "bugs": {
     "url": "https://github.com/jcubic/tagger/issues"
   },
-  "homepage": "https://github.com/jcubic/tagger#readme"
+  "homepage": "https://github.com/jcubic/tagger#readme",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
 }

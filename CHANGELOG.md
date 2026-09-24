@@ -1,3 +1,10 @@
+## Unreleased
+* add drag & drop tag reordering with keyboard support (Ctrl+Left/Right)
+* add arrow key navigation between tags
+* add paste import of multiple tags separated by comma, semicolon, tab or newlines (de-duplicated)
+* add `validate` option that rejects invalid tags and attaches the error to the tag
+* add test suite based on node:test and jsdom
+
 ## 0.6.2
 * fix removing tags containing multiple consecutive spaces [#47](https://github.com/jcubic/tagger/pull/47). Thanks to [nuclear06](https://github.com/nuclear06)
 
