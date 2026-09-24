@@ -21,6 +21,7 @@ declare namespace Tagger {
     }
     type link = (name: string) => (string | false);
     type filter = (name: string) => (string);
+    type validate = (name: string) => (boolean | string | null | undefined | void);
 }
 
 interface tagger_options {
@@ -33,12 +34,14 @@ interface tagger_options {
     link?: Tagger.link;
     placeholder?: string;
     filter?: Tagger.filter;
+    validate?: Tagger.validate;
 }
 
 interface tagger_instance {
     add_tag(name: string): boolean;
     remove_tag(name: string): boolean;
     complete(name: string): void;
+    tags(): string[];
 }
 
 export default function tagger(element: HTMLElement, option?: tagger_options): tagger_instance;

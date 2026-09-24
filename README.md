@@ -86,6 +86,7 @@ See demo in action on [CodePen](https://codepen.io/jcubic/pen/YzRdbmp?editors=00
 * `add_tag(string): boolean`
 * `remove_tag(string): booelan`
 * `complete(string): void`
+* `tags(): string[]` returns a copy of the currently stored tag names
 
 ### Options:
 
@@ -98,6 +99,29 @@ See demo in action on [CodePen](https://codepen.io/jcubic/pen/YzRdbmp?editors=00
 * **tag_limit** `number` (default -1) limit number of tags, when set to -1 there are no limits
 * **placeholder** `string` (default unset) If set in options or on the initial input, this placeholder value will be shown in the tag entry input
 * **filter** `function(name): string` it should return the tag name after applying any filters (eg String.toUpperCase()), empty string to filter out tag and prevent creation.
+* **validate** `function(name): boolean|string` optional callback used to reject a tag. Return `true`/`undefined` to accept, return `false` to reject with a generic message, or return a non-empty string to reject with a custom error. Rejected tags are rendered with a `tagger-invalid` class and an inline `.tagger-error` message (using `role="alert"`), but they are **not** saved to the original input value nor included in `tags()`. Tags that throw inside the callback are treated as rejected with the exception message.
+
+### Reordering tags
+
+Every valid tag can be reordered:
+
+* **Mouse** — drag a tag (HTML5 Drag & Drop) and drop it before/after another tag or at the end of the row.
+* **Keyboard / assistive tech** — focus a tag (Tab to it, or use ← / → arrows from the text input) and use the WAI-ARIA move commands: <kbd>Space</kbd> or <kbd>Enter</kbd> grabs/drops the tag, arrow keys move it while grabbed, and <kbd>Esc</kbd> cancels. <kbd>Backspace</kbd>/<kbd>Delete</kbd> removes the focused tag. Invalid tags are focusable and removable but can't be dragged.
+
+### Bulk paste
+
+Pasting multiple values into the input splits the clipboard text on commas, semicolons, vertical bars, CJK punctuation (`，、；`) and line breaks, trims whitespace around each piece and de-duplicates the results (case-insensitive within the pasted batch; existing tags are also respected unless `allow_duplicates` is enabled). Typing `a,b,c` and pressing Enter uses the same splitting. A single token paste keeps the native browser behavior.
+
+## Testing
+
+The test suite uses only the built-in [node:test](https://nodejs.org/api/test.html) runner and [jsdom](https://github.com/jsdom/jsdom) — no heavy framework:
+
+```
+npm install
+npm test
+```
+
+Tests live in [test/](test/) and cover Enter/comma splitting, delimited & multi-line paste with de-duplication, Backspace removal, arrow-key focus movement, per-instance state isolation, mouse and keyboard reordering, and the `validate` callback.
 
 **NOTE:** if you're familiar with TypeScript you can check the API by looking at
 TypeScript definition file:

@@ -121,6 +121,7 @@
             return '/tag/' + name;
         },
         filter: (name) => name,
+        validate: null
     };
     // ------------------------------------------------------------------------------------------
     tagger.fn = tagger.prototype = {
@@ -159,6 +160,18 @@
             if (this._settings.completion.list instanceof Array) {
                 this._build_completion(this._settings.completion.list);
             }
+            this._update_a11y();
+            this._live = create('div', {
+                'class': 'tagger-live',
+                'aria-live': 'polite'
+            }, []);
+            this._dnd_instructions = create('div', {
+                id: 'tagger-dnd-' + this._id,
+                'class': 'tagger-sr-only'
+            }, ['Press space to pick up this tag, use arrow keys to move it, ' +
+                  'space to drop, or escape to cancel.']);
+            wrapper.appendChild(this._live);
+            wrapper.appendChild(this._dnd_instructions);
         },
         _update_input: function () {
           // ReactJS overwrite value setting on inputs, this is a workaround
@@ -172,34 +185,46 @@
         _add_events: function() {
             var self = this;
             this._ul.addEventListener('click', function(event) {
-                if (event.target.className.match(/close/)) {
+                if (event.target.className &&
+                    String(event.target.className).match(/close/)) {
                     self._remove_tag(event.target);
                     event.preventDefault();
                 } else if (event.target.tagName === 'UL') { //Focus new input when clicking in the whitespace of the Tagger instance
                     self._new_input_tag.focus();
+                } else {
+                    var clicked_li = self._li_from_event(event);
+                    if (clicked_li && (clicked_li.classList.contains('tagger-tag') ||
+                        clicked_li.classList.contains('tagger-invalid')) &&
+                        event.target.tagName !== 'A') {
+                        clicked_li.focus();
+                    }
                 }
             });
             if (this._settings.add_on_blur) {
                 this._new_input_tag.addEventListener('blur', function(event) {
-                    if (self.add_tag(self._new_input_tag.value.trim())) {
+                    if (self._commit_input()) {
                         self._new_input_tag.value = '';
                     }
                 });
             }
             // ----------------------------------------------------------------------------------
             this._new_input_tag.addEventListener('keydown', function(event) {
-                if (event.keyCode === 13 || event.keyCode === 188 ||
-                    (event.keyCode === 32 && !self._settings.allow_spaces)) { // enter || comma || space
-                    if (self.add_tag(self._new_input_tag.value.trim())) {
-                        self._new_input_tag.value = '';
+                if (event.keyCode === 37) { // left arrow - move focus to last tag
+                    var caret_at_start = self._new_input_tag.selectionStart === 0 &&
+                        self._new_input_tag.selectionEnd === 0;
+                    if (caret_at_start && self._tag_items().length) {
+                        self._focus_tag_at(self._tag_items().length - 1);
+                        event.preventDefault();
                     }
+                } else if (event.keyCode === 13 || event.keyCode === 188 ||
+                    (event.keyCode === 32 && !self._settings.allow_spaces)) { // enter || comma || space
+                    self._commit_input();
                     event.preventDefault();
                 } else if (event.keyCode === 8 && !self._new_input_tag.value) { // backspace
-                    if (self._tags.length > 0) {
-                        var li = self._ul.querySelector('li:nth-last-child(2)');
-                        self._ul.removeChild(li);
-                        self._tags.pop();
-                        self._update_input();
+                    if (self._tag_items().length > 0) {
+                        var items = self._tag_items();
+                        var li = items[items.length - 1];
+                        self._remove_tag_li(li);
                     }
                     event.preventDefault();
                 } else if (event.keyCode === 32 && (event.ctrlKey || event.metaKey)) {
@@ -210,6 +235,53 @@
                     event.preventDefault();
                 } else if (self._tag_limit() && event.keyCode !== 9) { // tab
                     event.preventDefault();
+                }
+            });
+            // ----------------------------------------------------------------------------------
+            this._new_input_tag.addEventListener('paste', function(event) {
+                var clipboard = event.clipboardData;
+                if (!clipboard) {
+                    return;
+                }
+                var text = clipboard.getData('text/plain');
+                var pieces = self._split_paste(text);
+                if (pieces.length <= 1) {
+                    return;
+                }
+                event.preventDefault();
+                var prefix = self._new_input_tag.value;
+                if (prefix) {
+                    pieces.unshift(prefix);
+                }
+                self._commit_names(pieces);
+                self._new_input_tag.value = '';
+            });
+            // ----------------------------------------------------------------------------------
+            this._ul.addEventListener('keydown', function(event) {
+                self._tag_keydown(event);
+            });
+            // ----------------------------------------------------------------------------------
+            this._ul.addEventListener('dragstart', function(event) {
+                var li = self._li_from_event(event);
+                if (li && li.classList.contains('tagger-tag') && li.draggable) {
+                    self._drag_start(li, event);
+                }
+            });
+            this._ul.addEventListener('dragend', function(event) {
+                if (self._dragging) {
+                    self._drag_cleanup();
+                }
+            });
+            this._ul.addEventListener('dragover', function(event) {
+                if (self._dragging) {
+                    self._drag_over(event);
+                }
+            });
+            this._ul.addEventListener('drop', function(event) {
+                if (self._dragging) {
+                    event.preventDefault();
+                    self._drag_drop(event);
+                    self._drag_cleanup();
                 }
             });
             // ----------------------------------------------------------------------------------
@@ -291,25 +363,106 @@
         // --------------------------------------------------------------------------------------
         tags_from_input: function() {
             this._tags = this._input.value.split(/\s*,\s*/).filter(Boolean);
-            this._tags.forEach(this._new_tag.bind(this));
+            this._tags.forEach(function(name) {
+                this._new_tag(name);
+            }.bind(this));
         },
         // --------------------------------------------------------------------------------------
-        _new_tag: function(name) {
+        _new_tag: function(name, invalid) {
             var close = ['a', {href: '#', 'class': 'close'}, ['\u00D7']];
             var label = ['span', {'class': 'label'}, [name]];
             var href = this._settings.link(name);
             var li;
-            if (href === false) {
-                li = create('li', {}, [['span', {}, [label, close]]]);
+            if (invalid) {
+                var error_msg = invalid === true ? 'Invalid tag' : invalid;
+                var error = ['span', {'class': 'tagger-error', role: 'alert'}, [error_msg]];
+                li = create('li', {
+                    'class': 'tagger-invalid',
+                    tabindex: '0',
+                    'aria-invalid': 'true',
+                    title: error_msg
+                }, [['span', {'class': 'tagger-chip'}, [label, close]], error]);
+            } else if (href === false) {
+                li = create('li', {
+                    'class': 'tagger-tag',
+                    tabindex: '0',
+                    draggable: 'true'
+                }, [['span', {'class': 'tagger-chip'}, [label, close]]]);
             } else {
                 var a_atts = {href: href, target: '_black'};
-                li = create('li', {}, [['a', a_atts, [label, close]]]);
+                li = create('li', {
+                    'class': 'tagger-tag',
+                    tabindex: '0',
+                    draggable: 'true'
+                }, [['a', a_atts, [label, close]]]);
             }
             this._ul.insertBefore(li, this._new_input_tag.parentNode);
+            return li;
         },
         // --------------------------------------------------------------------------------------
         _tag_limit: function() {
             return this._settings.tag_limit > 0 && this._tags.length >= this._settings.tag_limit;
+        },
+        // --------------------------------------------------------------------------------------
+        tags: function() {
+            return this._tags.slice();
+        },
+        // --------------------------------------------------------------------------------------
+        _split_paste: function(text) {
+            var raw = String(text || '').split(/[\r\n,;;，、|]+/);
+            var pieces = [];
+            var seen = {};
+            raw.forEach(function(piece) {
+                var piece_name = piece.trim();
+                if (!piece_name || seen[piece_name.toLowerCase()]) {
+                    return;
+                }
+                seen[piece_name.toLowerCase()] = true;
+                pieces.push(piece_name);
+            });
+            return pieces;
+        },
+        // --------------------------------------------------------------------------------------
+        _commit_input: function() {
+            var value = this._new_input_tag.value.trim();
+            var delimiters = /[\r\n,;;，、|]/;
+            if (delimiters.test(value)) {
+                var names = this._split_paste(value);
+                this._commit_names(names);
+                this._new_input_tag.value = '';
+                return names.length > 0;
+            }
+            var created = this.add_tag(value);
+            if (created || value === '') {
+                this._new_input_tag.value = '';
+            }
+            return created;
+        },
+        // --------------------------------------------------------------------------------------
+        _commit_names: function(names) {
+            names.forEach(function(name) {
+                this.add_tag(name);
+            }.bind(this));
+        },
+        // --------------------------------------------------------------------------------------
+        _validate: function(name) {
+            var validate = this._settings.validate;
+            if (typeof validate !== 'function') {
+                return null;
+            }
+            var result;
+            try {
+                result = validate(name);
+            } catch (e) {
+                return e && e.message ? e.message : true;
+            }
+            if (result === true || result === null || result === undefined) {
+                return null;
+            }
+            if (result === false) {
+                return true;
+            }
+            return String(result);
         },
         // --------------------------------------------------------------------------------------
         add_tag: function(name) {
@@ -323,9 +476,20 @@
             if (!this._settings.allow_duplicates && this._tags.indexOf(name) !== -1) {
                 return false;
             }
+            var invalid = this._validate(name);
+            if (invalid) {
+                this._new_tag(name, invalid);
+                this._update_a11y();
+                return false;
+            }
             this._new_tag(name);
             this._tags.push(name);
             this._update_input();
+            this._update_a11y();
+            if (this._live) {
+                this._live.textContent = name + ' added, ' + this._tags.length +
+                    (this._tags.length === 1 ? ' tag' : ' tags') + ' total';
+            }
             return true;
         },
         // --------------------------------------------------------------------------------------
@@ -344,30 +508,320 @@
         },
         // --------------------------------------------------------------------------------------
         remove_tag: function(name, remove_dom = true) {
+            var was_tracked = this._tags.indexOf(name) !== -1;
             this._tags = this._tags.filter(function(tag) {
                 return name !== tag;
             });
-            this._update_input();
+            if (was_tracked) {
+                this._update_input();
+            }
             if (remove_dom) {
                 var tags = Array.from(this._ul.querySelectorAll('.label'));
                 var re = new RegExp('^\s*' + escape_regex(name) + '\s*$');
                 var span = tags.find(function(node) {
-                    return node.innerText.match(re);
+                    return (node.textContent || '').match(re);
                 });
                 if (!span) {
                     return false;
                 }
-                var li = span.closest('li');
-                this._ul.removeChild(li);
+                this._remove_tag_li(span.closest('li'), false);
                 return true;
             }
         },
         // --------------------------------------------------------------------------------------
         _remove_tag: function(close) {
             var li = close.closest('li');
+            this._remove_tag_li(li);
+        },
+        // --------------------------------------------------------------------------------------
+        _remove_tag_li: function(li, update_a11y) {
+            if (!li || !this._ul.contains(li)) {
+                return;
+            }
+            var was_tracked = li.classList.contains('tagger-tag');
             var name = li.querySelector('.label').textContent;
+            if (this._keyboard_dragging && this._keyboard_dragging === li) {
+                this._keyboard_cancel();
+            }
             this._ul.removeChild(li);
-            this.remove_tag(name, false);
+            if (was_tracked) {
+                this.remove_tag(name, false);
+            }
+            if (update_a11y !== false) {
+                this._update_a11y();
+            }
+        },
+        // --------------------------------------------------------------------------------------
+        _tag_items: function() {
+            return Array.prototype.slice.call(this._ul.children).filter(function(li) {
+                return li.classList.contains('tagger-tag') ||
+                    li.classList.contains('tagger-invalid');
+            });
+        },
+        // --------------------------------------------------------------------------------------
+        _focus_tag_at: function(index) {
+            var items = this._tag_items();
+            if (index < 0 || index >= items.length) {
+                this._new_input_tag.focus();
+                return null;
+            }
+            items[index].focus();
+            return items[index];
+        },
+        // --------------------------------------------------------------------------------------
+        _li_from_event: function(event) {
+            var node = event.target;
+            while (node && node !== this._ul) {
+                if (node.nodeType === 1 && node.tagName === 'LI') {
+                    return node;
+                }
+                node = node.parentNode;
+            }
+            return null;
+        },
+        // --------------------------------------------------------------------------------------
+        _tag_keydown: function(event) {
+            var li = this._li_from_event(event);
+            if (!li || li.classList.contains('tagger-new')) {
+                return;
+            }
+            var index = this._tag_items().indexOf(li);
+            var key = event.keyCode;
+            if (key === 37) { // left arrow
+                if (this._keyboard_dragging) {
+                    this._keyboard_move(li, -1);
+                } else if (index > 0) {
+                    this._focus_tag_at(index - 1);
+                }
+                event.preventDefault();
+            } else if (key === 39) { // right arrow
+                if (this._keyboard_dragging) {
+                    this._keyboard_move(li, 1);
+                } else if (index < this._tag_items().length - 1) {
+                    this._focus_tag_at(index + 1);
+                } else {
+                    this._new_input_tag.focus();
+                }
+                event.preventDefault();
+            } else if ((key === 32 || key === 13) && event.target === li) {
+                // space or enter - accessible grab / drop move command
+                if (li.classList.contains('tagger-tag')) {
+                    if (this._keyboard_dragging) {
+                        this._keyboard_drop();
+                    } else {
+                        this._keyboard_grab(li);
+                    }
+                    event.preventDefault();
+                }
+            } else if (key === 27 && this._keyboard_dragging) { // escape
+                this._keyboard_cancel();
+                event.preventDefault();
+            } else if ((key === 8 || key === 46) && event.target === li) {
+                // backspace / delete removes the focused tag
+                this._remove_tag_li(li);
+                var items = this._tag_items();
+                if (items.length) {
+                    this._focus_tag_at(Math.min(index, items.length - 1));
+                } else {
+                    this._new_input_tag.focus();
+                }
+                event.preventDefault();
+            }
+        },
+        // --------------------------------------------------------------------------------------
+        _announce: function(message) {
+            if (this._live) {
+                this._live.textContent = '';
+                var self = this;
+                setTimeout(function() {
+                    self._live.textContent = message;
+                }, 30);
+            }
+        },
+        // --------------------------------------------------------------------------------------
+        _update_a11y: function() {
+            var items = this._tag_items();
+            items.forEach(function(li, position) {
+                var name = li.querySelector('.label').textContent;
+                if (li.classList.contains('tagger-invalid')) {
+                    li.setAttribute('aria-label', name + ' invalid tag, ' + (position + 1) +
+                        ' of ' + items.length + '. Press backspace to remove.');
+                } else {
+                    li.setAttribute('aria-label', name + ' tag ' + (position + 1) + ' of ' +
+                        items.length + '. Press space to reorder.');
+                }
+            });
+        },
+        // --------------------------------------------------------------------------------------
+        _keyboard_grab: function(li) {
+            this._keyboard_dragging = li;
+            this._keyboard_origin = 0;
+            var children = li.parentNode.children;
+            for (var i = 0; i < children.length; i++) {
+                if (li.parentNode.children[i] === li) {
+                    this._keyboard_origin = i;
+                    break;
+                }
+            }
+            li.classList.add('tagger-dragging');
+            li.setAttribute('aria-dropeffect', 'move');
+            li.setAttribute('aria-grabbed', 'true');
+            li.setAttribute('aria-describedby', 'tagger-dnd-' + this._id);
+            this._announce('Picked up tag at position ' + (this._keyboard_origin + 1) +
+                '. Use arrow keys to move, space to drop, escape to cancel.');
+        },
+        // --------------------------------------------------------------------------------------
+        _keyboard_drop: function() {
+            var li = this._keyboard_dragging;
+            if (li) {
+                li.classList.remove('tagger-dragging');
+                li.removeAttribute('aria-dropeffect');
+                li.removeAttribute('aria-grabbed');
+                li.removeAttribute('aria-describedby');
+                li.focus();
+            }
+            this._keyboard_dragging = null;
+            this._keyboard_origin = null;
+            this._sync_tags();
+        },
+        // --------------------------------------------------------------------------------------
+        _keyboard_cancel: function() {
+            var li = this._keyboard_dragging;
+            if (li) {
+                var children = Array.prototype.slice.call(this._ul.children);
+                var new_li = children[this._keyboard_origin];
+                if (new_li !== li) {
+                    this._ul.insertBefore(li, new_li);
+                }
+                li.classList.remove('tagger-dragging');
+                li.removeAttribute('aria-dropeffect');
+                li.removeAttribute('aria-grabbed');
+                li.removeAttribute('aria-describedby');
+                li.focus();
+            }
+            this._keyboard_dragging = null;
+            this._keyboard_origin = null;
+            this._update_a11y();
+        },
+        // --------------------------------------------------------------------------------------
+        _keyboard_move: function(li, direction) {
+            var items = this._tag_items();
+            var index = items.indexOf(li);
+            var target = items[index + direction];
+            if (!target) {
+                return;
+            }
+            if (direction < 0) {
+                this._ul.insertBefore(li, target);
+            } else {
+                var following = items[index + 2];
+                this._ul.insertBefore(li, following ? following :
+                                      this._new_input_tag.parentNode);
+            }
+            this._update_a11y();
+            var new_position = this._tag_items().indexOf(li) + 1;
+            this._announce('Moved to position ' + new_position + ' of ' +
+                this._tag_items().length + '.');
+        },
+        // --------------------------------------------------------------------------------------
+        _sync_tags: function() {
+            this._tags = this._tag_items().filter(function(li) {
+                return li.classList.contains('tagger-tag');
+            }).map(function(li) {
+                return li.querySelector('.label').textContent;
+            });
+            this._update_input();
+            this._update_a11y();
+        },
+        // --------------------------------------------------------------------------------------
+        _drag_start: function(li, event) {
+            var data = event.dataTransfer;
+            this._dragging = li;
+            li.classList.add('tagger-dragging');
+            if (data) {
+                try {
+                    data.effectAllowed = 'move';
+                    data.setData('text/plain', li.querySelector('.label').textContent);
+                } catch (e) {}
+            }
+        },
+        // --------------------------------------------------------------------------------------
+        _drag_cleanup: function() {
+            var previous = this._ul.querySelector('.tagger-drop-before') ||
+                this._ul.querySelector('.tagger-drop-after');
+            if (previous) {
+                previous.classList.remove('tagger-drop-before', 'tagger-drop-after');
+            }
+            if (this._dragging) {
+                this._dragging.classList.remove('tagger-dragging');
+            }
+            this._dragging = null;
+        },
+        // --------------------------------------------------------------------------------------
+        _drag_over: function(event) {
+            var target = this._li_from_event(event);
+            var marker = this._ul.querySelector('.tagger-drop-before') ||
+                this._ul.querySelector('.tagger-drop-after');
+            if (marker) {
+                marker.classList.remove('tagger-drop-before', 'tagger-drop-after');
+            }
+            if (target && target !== this._dragging &&
+                (target.classList.contains('tagger-tag') ||
+                 target.classList.contains('tagger-invalid'))) {
+                var rect = target.getBoundingClientRect();
+                var before;
+                if (event.clientY !== 0 &&
+                    (event.clientY < rect.top - 5 || event.clientY > rect.bottom + 5)) {
+                    before = event.clientY < rect.top;
+                } else {
+                    before = event.clientX < rect.left + rect.width / 2;
+                }
+                target.classList.add(before ? 'tagger-drop-before' : 'tagger-drop-after');
+                event.preventDefault();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+            } else if (event.target === this._ul ||
+                       (event.target.classList &&
+                        event.target.classList.contains('tagger-new'))) {
+                event.preventDefault();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+            }
+        },
+        // --------------------------------------------------------------------------------------
+        _drag_drop: function(event) {
+            var target = this._li_from_event(event);
+            var moved = false;
+            if (target && target !== this._dragging) {
+                var rect = target.getBoundingClientRect();
+                var before;
+                if (event.clientY !== 0 &&
+                    (event.clientY < rect.top - 5 || event.clientY > rect.bottom + 5)) {
+                    before = event.clientY < rect.top;
+                } else {
+                    before = event.clientX < rect.left + rect.width / 2;
+                }
+                if (before) {
+                    this._ul.insertBefore(this._dragging, target);
+                } else {
+                    var items = this._tag_items();
+                    var next = items[items.indexOf(target) + 1];
+                    if (next) {
+                        this._ul.insertBefore(this._dragging, next);
+                    } else {
+                        this._ul.insertBefore(this._dragging, this._new_input_tag.parentNode);
+                    }
+                }
+                moved = true;
+            } else if (!target) {
+                this._ul.insertBefore(this._dragging, this._new_input_tag.parentNode);
+                moved = true;
+            }
+            if (moved) {
+                this._sync_tags();
+            }
         }
     };
     // ------------------------------------------------------------------------------------------

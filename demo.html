@@ -14,12 +14,68 @@
 </head>
 <body>
   <h1>Tagger Example</h1>
+
+  <section>
+    <h2>New features: drag &amp; drop, bulk paste, validation</h2>
+    <ul>
+      <li><strong>Reorder</strong>: drag a tag with the mouse, or focus it (Tab / arrow
+          keys) and press <kbd>Space</kbd> to grab, <kbd>&larr;</kbd>/<kbd>&rarr;</kbd>
+          to move, <kbd>Space</kbd> to drop, <kbd>Esc</kbd> to cancel.</li>
+      <li><strong>Bulk paste</strong>: copy text like
+          <code>alpha, beta, gamma</code> or several lines and paste into the input —
+          it is split by commas / semicolons / new lines and de-duplicated.</li>
+      <li><strong>Validation</strong>: lowercase tags only and at least 2 characters.
+          Rejected tags stay visible with a red error message but are <em>not</em>
+          saved to the underlying input value.</li>
+    </ul>
+    <p>Tag count: <strong id="tag-count" aria-live="polite">0</strong></p>
+    <input type="text" value="javascript,css,html" name="features" />
+    <p style="font-size:13px;color:#555">
+      Try copying this:
+      <button type="button" id="copy-sample">copy sample tags</button>
+      <code id="sample-tags">nodejs,  python ,javascript
+rust
+python,ruby;;go,JS</code>
+    </p>
+  </section>
+
+  <hr>
+
   <input type="text" value="charles,louis,michel" name="tags" />
   <input type="text" value="charles,louis,michel" name="tags2" />
   <input type="text" value="charles,louis,michel" name="tags3a" />
   <input type="text" value="charles,louis,michel,lorem,ipsum,dolor,sit,amet,this is some long tag that should be wrapped" name="tags3b" />
 <script src="tagger.js"></script>
 <script>
+  var features = tagger(document.querySelector('[name="features"]'), {
+      allow_duplicates: false,
+      allow_spaces: true,
+      wrap: true,
+      link: function() { return false; },
+      validate: function(name) {
+          if (!/^[a-z0-9][a-z0-9 ]*$/.test(name)) {
+              return 'lowercase letters and digits only';
+          }
+          if (name.length < 2) {
+              return 'at least 2 characters';
+          }
+          return true;
+      }
+  });
+  var count_el = document.getElementById('tag-count');
+  function update_count() {
+      count_el.textContent = features.tags().length;
+  }
+  var features_input = document.querySelector('[name="features"]');
+  features_input.addEventListener('input', update_count);
+  update_count();
+  document.getElementById('copy-sample').addEventListener('click', function() {
+      var text = document.getElementById('sample-tags').textContent;
+      navigator.clipboard.writeText(text).then(function() {
+          document.getElementById('copy-sample').textContent = 'copied!';
+      });
+  });
+
   var t1 = tagger(document.querySelector('[name="tags"]'), {
       allow_duplicates: false,
       allow_spaces: true,
